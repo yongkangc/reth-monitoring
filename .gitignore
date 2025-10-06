@@ -1,0 +1,17 @@
+# Logs
+logs/
+*.log
+
+# Configuration with secrets
+config.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
