@@ -26,6 +26,7 @@ log() {
 
 # Initialize issue tracking
 ISSUES=()
+CRITICAL_ISSUES=()
 
 # Function to send Slack notification
 send_alert() {
@@ -41,7 +42,7 @@ check_reth_process() {
         log "✓ Reth process is running (PID: $(pgrep -x 'reth'))"
         return 0
     else
-        ISSUES+=("Reth process is not running")
+        CRITICAL_ISSUES+=("Reth process is not running")
         return 1
     fi
 }
@@ -53,7 +54,7 @@ check_lighthouse_process() {
         log "✓ Lighthouse process is running (PID: $(pgrep -f 'lighthouse.*bn'))"
         return 0
     else
-        ISSUES+=("Lighthouse beacon node is not running")
+        CRITICAL_ISSUES+=("Lighthouse beacon node is not running")
         return 1
     fi
 }
@@ -65,19 +66,19 @@ check_reth_port() {
         log "✓ Reth Engine API port $RETH_ENGINE_PORT is responding"
         return 0
     else
-        ISSUES+=("Reth Engine API port $RETH_ENGINE_PORT is not responding")
+        CRITICAL_ISSUES+=("Reth Engine API port $RETH_ENGINE_PORT is not responding")
         return 1
     fi
 }
 
-# Check if Lighthouse HTTP API port is responding
+# Check if Lighthouse P2P port is responding
 check_lighthouse_port() {
-    log "Checking Lighthouse HTTP API port $LIGHTHOUSE_HTTP_PORT..."
-    if nc -z localhost "$LIGHTHOUSE_HTTP_PORT" 2>/dev/null; then
-        log "✓ Lighthouse HTTP API port $LIGHTHOUSE_HTTP_PORT is responding"
+    log "Checking Lighthouse P2P port $LIGHTHOUSE_P2P_PORT..."
+    if nc -z localhost "$LIGHTHOUSE_P2P_PORT" 2>/dev/null; then
+        log "✓ Lighthouse P2P port $LIGHTHOUSE_P2P_PORT is responding"
         return 0
     else
-        ISSUES+=("Lighthouse HTTP API port $LIGHTHOUSE_HTTP_PORT is not responding")
+        CRITICAL_ISSUES+=("Lighthouse P2P port $LIGHTHOUSE_P2P_PORT is not responding")
         return 1
     fi
 }
@@ -103,7 +104,7 @@ check_reth_sync_status() {
     fi
 
     # Check for sync progress indicators
-    if echo "$recent_logs" | grep -qi "syncing\|downloaded\|stage.*progress\|block.*imported"; then
+    if echo "$recent_logs" | grep -qi "executed block\|received block from consensus\|forkchoiceupdated\|stage=execution\|syncing\|downloaded\|stage.*progress\|block.*imported"; then
         log "✓ Reth appears to be syncing (recent activity detected)"
         return 0
     else
@@ -129,16 +130,17 @@ check_lighthouse_sync_status() {
 
     local recent_logs=$(tail -n 100 "$LIGHTHOUSE_LOG_FILE")
 
-    # Check for error patterns
-    if echo "$recent_logs" | grep -qi "error\|crit\|warn.*execution"; then
-        local error_count=$(echo "$recent_logs" | grep -ci "error\|crit")
-        if [[ $error_count -gt 5 ]]; then
-            ISSUES+=("Lighthouse has $error_count recent errors in logs")
+    # Check for critical error patterns (excluding normal warnings like FutureSlot)
+    local critical_errors=$(echo "$recent_logs" | grep -i "crit\|fatal" | grep -v "FutureSlot" || true)
+    if [[ -n "$critical_errors" ]]; then
+        local error_count=$(echo "$critical_errors" | wc -l)
+        if [[ $error_count -gt 3 ]]; then
+            ISSUES+=("Lighthouse has $error_count critical errors in logs")
         fi
     fi
 
     # Check for sync indicators
-    if echo "$recent_logs" | grep -qi "synced\|syncing.*head"; then
+    if echo "$recent_logs" | grep -qi "synced\|syncing.*head\|running beacon chain\|peer transitioned\|received status"; then
         log "✓ Lighthouse appears to be syncing or synced"
         return 0
     else
@@ -162,23 +164,37 @@ main() {
     check_lighthouse_sync_status || true
 
     # Report results
-    if [[ ${#ISSUES[@]} -eq 0 ]]; then
+    local total_issues=$((${#ISSUES[@]} + ${#CRITICAL_ISSUES[@]}))
+
+    if [[ $total_issues -eq 0 ]]; then
         log "✓ All checks passed - Reth and Lighthouse are running normally"
     else
-        log "✗ ${#ISSUES[@]} issue(s) detected:"
-        for issue in "${ISSUES[@]}"; do
-            log "  - $issue"
-        done
+        # Log all issues
+        if [[ ${#CRITICAL_ISSUES[@]} -gt 0 ]]; then
+            log "✗ ${#CRITICAL_ISSUES[@]} critical issue(s) detected:"
+            for issue in "${CRITICAL_ISSUES[@]}"; do
+                log "  - $issue"
+            done
+        fi
 
-        # Send consolidated alert to Slack
-        local alert_message="🚨 *Reth/Lighthouse Monitoring Alert*\n\n"
-        alert_message+="*Issues Detected:*\n"
-        for issue in "${ISSUES[@]}"; do
-            alert_message+="• $issue\n"
-        done
-        alert_message+="\n*Host:* $(hostname)\n*Time:* $(date '+%Y-%m-%d %H:%M:%S')"
+        if [[ ${#ISSUES[@]} -gt 0 ]]; then
+            log "⚠ ${#ISSUES[@]} informational issue(s) detected:"
+            for issue in "${ISSUES[@]}"; do
+                log "  - $issue"
+            done
+        fi
 
-        send_alert "$alert_message"
+        # Only send Slack alert for critical issues (process/port failures)
+        if [[ ${#CRITICAL_ISSUES[@]} -gt 0 ]]; then
+            local alert_message="🚨 *Reth/Lighthouse Monitoring Alert*\n\n"
+            alert_message+="*Critical Issues Detected:*\n"
+            for issue in "${CRITICAL_ISSUES[@]}"; do
+                alert_message+="• $issue\n"
+            done
+            alert_message+="\n*Host:* $(hostname)\n*Time:* $(date '+%Y-%m-%d %H:%M:%S')"
+
+            send_alert "$alert_message"
+        fi
     fi
 
     log "Monitoring check completed"
