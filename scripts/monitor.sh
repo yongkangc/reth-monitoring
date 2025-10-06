@@ -62,7 +62,7 @@ check_lighthouse_process() {
 # Check if Reth Engine API port is responding
 check_reth_port() {
     log "Checking Reth Engine API port $RETH_ENGINE_PORT..."
-    if nc -z localhost "$RETH_ENGINE_PORT" 2>/dev/null; then
+    if timeout 10 nc -z localhost "$RETH_ENGINE_PORT" 2>/dev/null; then
         log "✓ Reth Engine API port $RETH_ENGINE_PORT is responding"
         return 0
     else
@@ -74,7 +74,7 @@ check_reth_port() {
 # Check if Lighthouse P2P port is responding
 check_lighthouse_port() {
     log "Checking Lighthouse P2P port $LIGHTHOUSE_P2P_PORT..."
-    if nc -z localhost "$LIGHTHOUSE_P2P_PORT" 2>/dev/null; then
+    if timeout 10 nc -z localhost "$LIGHTHOUSE_P2P_PORT" 2>/dev/null; then
         log "✓ Lighthouse P2P port $LIGHTHOUSE_P2P_PORT is responding"
         return 0
     else
